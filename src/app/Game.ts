@@ -1,257 +1,372 @@
-// Game controller: engine state, bot turns, promotion, rendering glue.
+// Game: pure game controller. Owns the chess State plus a UI snapshot that
+// React observes via subscribe(). No rendering code here — the React layer
+// owns the board SVG and all chrome.
 import {
-  Color, Move, State, Status, initialState, legalMoves, apply, san, inCheck,
-  materialDiff, undo,
+  initialState,
+  apply,
+  undo,
+  legalMoves,
+  inCheck,
+  san,
+  status,
+  materialDiff,
+  Piece,
+  Color,
+  State,
+  Move,
 } from "../chess/engine";
-import { Difficulty, pickMove, botChoices } from "../chess/bot";
-import { BoardView, ViewModel } from "./BoardView";
+import { pickMove, botChoices, Difficulty } from "../chess/bot";
 
-export interface GameCallbacks {
-  onStatus: (text: string, tone: "neutral" | "accent" | "warn" | "good") => void;
-  onScore: (text: string) => void;
-  onPromo: (choices: ("q" | "r" | "b" | "n")[], pick: (c: "q" | "r" | "b" | "n") => void) => void;
-  onBotThinking: (thinking: boolean) => void;
-  onChoices?: (choices: { san: string; score: number }[]) => void;
-  onMoves?: () => void;
+export type Tone = "accent" | "warn" | "good" | "bad" | "dim";
+
+export interface Choice {
+  san: string;
+  score: number;
 }
 
-const LEVELS: Difficulty[] = ["easy", "easy", "medium", "hard", "hard"]; // 0..4
+export interface MoveLabel {
+  san: string;
+  captured: boolean;
+  isCheck: boolean;
+  isMate: boolean;
+}
+
+export interface Snap {
+  board: (Piece | null)[];
+  turn: Color;
+  playingAs: Color;
+  selected: number;
+  targets: number[];
+  lastMove: { from: number; to: number } | null;
+  checkSq: number;
+  flipped: boolean;
+  statusText: string;
+  statusTone: Tone;
+  scoreText: string;
+  thinking: boolean;
+  gameOver: boolean;
+  level: number;
+  promo: "q" | "r" | "b" | "n" | null;
+  /** True while the promotion picker is open (promoPending set). */
+  promoOpen: boolean;
+  moveList: MoveLabel[][];
+  choices: Choice[];
+}
+
+const LEVELS: Difficulty[] = ["easy", "easy", "medium", "hard", "hard"];
+export const ELO_LABELS = ["300", "700", "1100", "1500", "1900"];
+
+type Listener = (s: Snap) => void;
+
+function isCapture(board: (Piece | null)[], m: Move): boolean {
+  return board[m.to] !== null || (m.flags ?? "").includes("e");
+}
 
 export class Game {
   private state: State = initialState();
-  private level = 2;
+  private level = 0;
   private playingAs: Color = "w";
-  private flipped = false;
-  private botThinking = false;
   private selected = -1;
-  private targets: { sq: number; capture: boolean }[] = [];
-  private promoPending: Move[] | null = null;
-  private moveList: { n: number; white: string; black: string }[] = [];
-  private gameOver = false;
+  private targets: number[] = [];
+  private lastMove: { from: number; to: number } | null = null;
+  private checkSq = -1;
+  private flipped = false;
   private botTimer: number | undefined;
-  private boardView: BoardView;
-  private cb: GameCallbacks;
+  private promoPending: Move | null = null;
+  private moveList: MoveLabel[][] = [];
+  private gameOver = false;
+  private statusText = "You play White";
+  private statusTone: Tone = "accent";
+  private scoreText = "0.0";
+  private thinking = false;
+  private promo: "q" | "r" | "b" | "n" | null = null;
+  private choices: Choice[] = [];
+  private snapCache: Snap | null = null;
+  private listeners = new Set<Listener>();
 
-  constructor(boardView: BoardView, cb: GameCallbacks) {
-    this.boardView = boardView;
-    this.cb = cb;
+  // ---- observer -----------------------------------------------------------
+  subscribe(fn: Listener): () => void {
+    this.listeners.add(fn);
+    return () => { this.listeners.delete(fn); };
   }
 
-  setLevel(level: number) {
-    this.level = Math.min(Math.max(level, 0), 4);
+  snapshot(): Snap {
+    // useSyncExternalStore requires a stable reference between notifies;
+    // rebuilding a fresh object each call would trip React error #185.
+    if (this.snapCache === null) this.rebuildSnapshot();
+    return this.snapCache!;
   }
 
-  newGame(as: Color) {
+  private rebuildSnapshot(): void {
+    this.snapCache = {
+      board: this.state.board,
+      turn: this.state.turn,
+      playingAs: this.playingAs,
+      selected: this.selected,
+      targets: this.targets,
+      lastMove: this.lastMove,
+      checkSq: this.checkSq,
+      flipped: this.flipped,
+      statusText: this.statusText,
+      statusTone: this.statusTone,
+      scoreText: this.scoreText,
+      thinking: this.thinking,
+      gameOver: this.gameOver,
+      level: this.level,
+      promo: this.promo,
+      promoOpen: this.promoPending !== null,
+      choices: this.choices,
+      moveList: this.moveList,
+    };
+  }
+
+  private notify(): void {
+    this.rebuildSnapshot();
+    for (const f of this.listeners) f(this.snapCache!);
+  }
+
+  // ---- public API ---------------------------------------------------------
+  newGame(as?: Color): void {
     this.state = initialState();
-    this.playingAs = as;
+    this.playingAs = as ?? this.playingAs;
     this.selected = -1;
     this.targets = [];
+    this.lastMove = null;
+    this.checkSq = -1;
+    this.clearTimer();
     this.promoPending = null;
     this.moveList = [];
     this.gameOver = false;
-    this.flipped = as === "b";
-    this.botThinking = false;
-    this.botTimer = undefined;
-    this.render();
-    this.cb.onStatus(as === "w" ? "You play White" : "You play Black", "accent");
-    if (as === "b") this.botGo();
+    this.thinking = false;
+    this.promo = null;
+    this.choices = [];
+    this.settle();
+    this.recomputeChoices();
+    if (this.playingAs === "b") this.botGo();
+    this.notify();
   }
 
-  // ---------------- pointer input (from BoardView)
+  setLevel(n: number): void {
+    this.level = Math.max(0, Math.min(4, n));
+    this.recomputeChoices();
+    this.notify();
+  }
 
-  down(lx: number, ly: number) {
-    if (this.botThinking || this.gameOver) return;
-    const sq = this.boardView.squareAt(lx, ly);
-    if (sq < 0) return;
+  down(sq: number): void {
+    if (this.gameOver || this.thinking) return;
     const p = this.state.board[sq];
     if (p && p.c === this.playingAs) {
       this.selected = sq;
-      this.targets = legalMoves(this.state)
-        .filter((m) => m.from === sq)
-        .map((m) => ({ sq: m.to, capture: this.state.board[m.to] !== null || m.flags === "e" }));
-    } else if (p) {
-      // Tapping an opponent piece cancels the current selection.
+      this.targets = legalMoves(this.state).filter((m) => m.from === sq).map((m) => m.to);
+    } else {
       this.selected = -1;
       this.targets = [];
-    } else if (this.selected < 0) {
-      // Empty square with nothing selected: no-op. Keep a pending selection so
-      // tap-piece-then-tap-target works (the target's down must not clear it).
     }
-    this.render();
+    this.notify();
   }
 
-  up(lx: number, ly: number) {
-    if (this.botThinking || this.gameOver) return;
-    if (this.selected < 0) return;
-    const sq = this.boardView.squareAt(lx, ly);
-    if (sq < 0 || sq === this.selected) return;
-    const moves = legalMoves(this.state).filter((m) => m.from === this.selected && m.to === sq);
+  up(sq: number): void {
+    if (this.gameOver || this.thinking) return;
+    if (sq < 0 || this.selected < 0) return;
+    if (sq === this.selected) { this.notify(); return; }
+    const moves = legalMoves(this.state).filter(
+      (m) => m.from === this.selected && m.to === sq,
+    );
     if (moves.length === 0) {
       this.selected = -1;
       this.targets = [];
-      this.render();
+      this.notify();
       return;
     }
     if (moves.length > 1) {
-      // pawn reached the last rank
-      this.promoPending = moves;
-      this.cb.onPromo(["q", "r", "b", "n"], (c) => {
-        const m = this.promoPending?.find((x) => x.promo === c);
-        this.promoPending = null;
-        if (m) this.makeHumanMove(m);
-      });
+      this.promoPending = moves[0];
+      this.promo = null;
+      this.notify();
       return;
     }
     this.makeHumanMove(moves[0]);
   }
 
-  private makeHumanMove(m: Move) {
-    const label = san(this.state, m);
-    this.state = apply(this.state, m);
-    this.pushMove(label, this.playingAs);
+  pickPromo(c: "q" | "r" | "b" | "n"): void {
+    if (!this.promoPending) return;
+    const m: Move = { ...this.promoPending, promo: c };
+    this.promoPending = null;
+    this.promo = null;
+    this.makeHumanMove(m);
+  }
+
+  cancelPromo(): void {
+    if (!this.promoPending) return;
+    this.promoPending = null;
+    this.promo = null;
     this.selected = -1;
     this.targets = [];
-    this.render();
-    if (this.endOfTurn()) return;
-    this.botGo();
+    this.notify();
   }
 
-  private botGo() {
-    window.clearTimeout(this.botTimer);
-    this.botThinking = true;
-    this.cb.onBotThinking(true);
-    this.botTimer = window.setTimeout(() => {
-      this.botTimer = undefined;
-      if (!this.botThinking || this.gameOver) return;
-      const { move } = pickMove(this.state, LEVELS[this.level], Date.now() & 0xffff);
-      const label = san(this.state, move);
-      this.state = apply(this.state, move);
-      this.pushMove(label, this.playingAs === "w" ? "b" : "w");
-      this.botThinking = false;
-      this.render();
-      this.cb.onBotThinking(false);
-      this.endOfTurn();
-    }, 200);
-  }
-
-  private pushMove(label: string, side: "w" | "b") {
-    const n = this.moveList.length;
-    if (side === "w") {
-      this.moveList[n] = { n: n + 1, white: label, black: "" };
-    } else {
-      if (!this.moveList[n]) this.moveList[n] = { n: n + 1, white: "", black: label };
-      else this.moveList[n].black = label;
-    }
-  }
-
-  moveListSnapshot(): { n: number; white: string; black: string }[] {
-    return this.moveList;
-  }
-
-  private endOfTurn(): boolean {
-    const st = this.status();
-    if (st !== "playing" && st !== "check") {
-      this.gameOver = true;
-      this.cb.onStatus(st.replace("-", " "), "warn");
-      return true;
-    }
-    if (st === "check") {
-      this.cb.onStatus(this.state.turn === this.playingAs ? "Check!" : "Bot is in check", "warn");
-    } else if (this.state.turn === this.playingAs) {
-      this.cb.onStatus(this.playingAs === "w" ? "You play White" : "You play Black", "accent");
-    }
-    return false;
-  }
-
-  private status(): Status {
-    const moves = legalMoves(this.state);
-    if (moves.length === 0) return inCheck(this.state) ? "checkmate" : "stalemate";
-    if (this.state.half >= 100) return "draw-50";
-    return inCheck(this.state) ? "check" : "playing";
-  }
-
-  // ---------------- rendering
-
-  render() {
-    let checkSq = -1;
-    if (inCheck(this.state)) {
-      const c = this.state.turn;
-      for (let i = 0; i < 64; i++) {
-        const p = this.state.board[i];
-        if (p && p.t === "k" && p.c === c) { checkSq = i; break; }
-      }
-    }
-    const vm: ViewModel = {
-      board: this.state.board,
-      selected: this.selected,
-      targets: this.targets,
-      lastMove: this.state.hist.length
-        ? { from: this.state.hist[this.state.hist.length - 1].from, to: this.state.hist[this.state.hist.length - 1].to }
-        : null,
-      checkSq,
-      flipped: this.flipped,
-    };
-    this.boardView.render(vm);
-    this.cb.onScore(materialScoreText(materialDiff(this.state.board)));
-    this.cb.onMoves?.();
-    this.cb.onChoices?.(this.layaChoices());
-  }
-
-  /** Top-8 ranked bot candidates for the side to move (display-only). */
-  layaChoices(): { san: string; score: number }[] {
-    return botChoices(this.state, LEVELS[this.level]);
-  }
-
-  resign() {
+  resign(): void {
     if (this.gameOver) return;
     this.gameOver = true;
-    window.clearTimeout(this.botTimer);
-    this.botTimer = undefined;
-    this.botThinking = false;
-    this.cb.onStatus("You resigned — bot wins", "warn");
+    this.clearTimer();
+    this.thinking = false;
+    this.statusText = `You resigned — ${this.playingAs === "w" ? "Black" : "White"} wins`;
+    this.statusTone = "warn";
+    this.choices = [];
+    this.notify();
   }
 
-  flip() {
+  flip(): void {
     this.flipped = !this.flipped;
-    this.render();
+    this.notify();
   }
 
-  takeBack() {
-    if (this.botThinking) { window.clearTimeout(this.botTimer); this.botTimer = undefined; this.botThinking = false; }
-    const n = this.state.turn === this.playingAs ? 2 : 1;
-    for (let i = 0; i < n && this.state.snaps.length > 0; i++) this.state = undo(this.state);
-    this.gameOver = false;
+  takeBack(): void {
+    if (this.gameOver || this.thinking) return;
+    this.clearTimer();
+    let st = this.state;
+    for (let i = 0; i < 2 && st.hist.length > 0; i++) {
+      st = undo(st);
+    }
+    this.state = st;
     this.selected = -1;
     this.targets = [];
-    this.promoPending = null;
     this.rebuildMoveList();
-    this.render();
-    this.cb.onStatus(this.playingAs === "w" ? "You play White" : "You play Black", "accent");
+    this.settle();
+    this.recomputeChoices();
+    if (this.playingAs === "b" && !this.gameOver) this.botGo();
+    this.notify();
   }
 
-  // Re-derive moveList from the (possibly shortened) history so it stays in
-  // sync after takeBack. SAN is recomputed by replaying from the initial state.
-  private rebuildMoveList() {
-    const list: { n: number; white: string; black: string }[] = [];
-    let s = initialState();
-    for (const m of this.state.hist) {
-      const label = san(s, m);
-      const nn = s.full;
-      if (s.turn === "w") {
-        if (!list[nn - 1]) list[nn - 1] = { n: nn, white: label, black: "" };
-        else list[nn - 1].white = label;
-      } else {
-        if (!list[nn - 1]) list[nn - 1] = { n: nn, white: "", black: label };
-        else list[nn - 1].black = label;
-      }
-      s = apply(s, m);
+  // ---- internals ----------------------------------------------------------
+  private makeHumanMove(m: Move): void {
+    const cap = isCapture(this.state.board, m);
+    const label = san(this.state, m);
+    this.state = apply(this.state, m);
+    this.lastMove = { from: m.from, to: m.to };
+    this.pushMove(label, cap);
+    this.selected = -1;
+    this.targets = [];
+    this.settle();
+    this.recomputeChoices();
+    if (!this.gameOver) this.botGo();
+    this.notify();
+  }
+
+  private botGo(): void {
+    this.clearTimer();
+    this.thinking = true;
+    this.notify();
+    const delay = 250 + Math.floor(Math.random() * 450);
+    this.botTimer = window.setTimeout(() => {
+      this.botTimer = undefined;
+      const { move: mv } = pickMove(this.state, LEVELS[this.level], Date.now() & 0xffff);
+      const cap = isCapture(this.state.board, mv);
+      const label = san(this.state, mv);
+      this.state = apply(this.state, mv);
+      this.lastMove = { from: mv.from, to: mv.to };
+      this.pushMove(label, cap);
+      this.thinking = false;
+      this.settle();
+      this.recomputeChoices();
+      this.notify();
+    }, delay);
+  }
+
+  private clearTimer(): void {
+    if (this.botTimer !== undefined) {
+      window.clearTimeout(this.botTimer);
+      this.botTimer = undefined;
     }
-    this.moveList = list;
+  }
+
+  private pushMove(sanLabel: string, isCap: boolean): void {
+    const isCheck = inCheck(this.state);
+    const isMate = status(this.state) === "checkmate";
+    const entry: MoveLabel = {
+      san: sanLabel,
+      captured: isCap,
+      isCheck,
+      isMate,
+    };
+    const lastRow = this.moveList[this.moveList.length - 1];
+    if (lastRow && lastRow.length < 2) lastRow.push(entry);
+    else this.moveList.push([entry]);
+  }
+
+  private rebuildMoveList(): void {
+    this.moveList = [];
+    let st = initialState();
+    for (let i = 0; i < this.state.hist.length; i++) {
+      const mv = this.state.hist[i];
+      const label = san(st, mv);
+      const cap = isCapture(st.board, mv);
+      st = apply(st, mv);
+      const entry: MoveLabel = {
+        san: label,
+        captured: cap,
+        isCheck: inCheck(st),
+        isMate: status(st) === "checkmate",
+      };
+      const lastRow = this.moveList[this.moveList.length - 1];
+      if (lastRow && lastRow.length < 2) lastRow.push(entry);
+      else this.moveList.push([entry]);
+      this.lastMove = { from: mv.from, to: mv.to };
+    }
+  }
+
+  private settle(): void {
+    const st = this.state;
+    const s = status(st);
+    if (s === "checkmate") {
+      this.gameOver = true;
+      this.thinking = false;
+      this.statusText = st.turn === this.playingAs ? "Checkmate — you lose" : "Checkmate — you win";
+      this.statusTone = st.turn === this.playingAs ? "bad" : "good";
+    } else if (s === "stalemate") {
+      this.gameOver = true;
+      this.thinking = false;
+      this.statusText = "Stalemate — draw";
+      this.statusTone = "warn";
+    } else if (s === "draw-material" || s === "draw-50" || s === "draw-repetition") {
+      this.gameOver = true;
+      this.thinking = false;
+      this.statusText = `Draw (${s.replace("draw-", "")})`;
+      this.statusTone = "warn";
+    } else {
+      this.gameOver = false;
+      const chk = inCheck(st);
+      this.checkSq = chk ? this.findKing(st, st.turn) : -1;
+      if (this.thinking) {
+        this.statusText = "Laya is thinking…";
+        this.statusTone = "dim";
+      } else if (st.turn === this.playingAs) {
+        this.statusText = chk ? "Check!" : `Your move (${st.turn === "w" ? "White" : "Black"})`;
+        this.statusTone = chk ? "warn" : "accent";
+      } else {
+        this.statusText = "Opponent to move";
+        this.statusTone = "dim";
+      }
+    }
+    this.scoreText = materialScoreText(materialDiff(this.state.board));
+  }
+
+  private recomputeChoices(): void {
+    if (this.gameOver) { this.choices = []; return; }
+    this.choices = botChoices(this.state, LEVELS[this.level]);
+  }
+
+  private findKing(st: State, c: Color): number {
+    const bd = st.board;
+    for (let i = 0; i < 64; i++) {
+      const p = bd[i];
+      if (p && p.t === "k" && p.c === c) return i;
+    }
+    return -1;
   }
 }
 
-export function materialScoreText(diff: number): string {
-  const v = Math.abs(diff);
-  if (v === 0) return "0.0";
-  return (v / 100).toFixed(1);
+export function materialScoreText(d: number): string {
+  if (d === 0) return "0.0";
+  const s = (Math.abs(d) / 2).toFixed(1);
+  return d > 0 ? `+${s}` : `-${s}`;
 }

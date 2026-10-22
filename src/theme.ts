@@ -25,6 +25,7 @@ export const palette = {
   // Highlight tints (derived, in-palette)
   lastMove: "rgba(243,139,168,0.35)", // bad #f38ba8 tint
   checkGlow: "rgba(250,179,135,0.45)", // peach #fab387-based
+  selectTint: "rgba(137,180,250,0.25)", // accent #89b4fa tint (selection)
   destDot: "rgba(137,180,250,0.85)", // accent #89b4fa
   captureRing: "rgba(137,180,250,0.35)", // accent ring for captures
   dragIllegal: "rgba(243,139,168,0.15)", // from --bad
