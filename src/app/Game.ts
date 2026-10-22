@@ -1,7 +1,7 @@
 // Game controller: engine state, bot turns, promotion, rendering glue.
 import {
   Color, Move, State, Status, initialState, legalMoves, apply, san, inCheck,
-  materialDiff,
+  materialDiff, undo,
 } from "../chess/engine";
 import { Difficulty, pickMove } from "../chess/bot";
 import { BoardView, ViewModel } from "./BoardView";
@@ -11,6 +11,7 @@ export interface GameCallbacks {
   onScore: (text: string) => void;
   onPromo: (choices: ("q" | "r" | "b" | "n")[], pick: (c: "q" | "r" | "b" | "n") => void) => void;
   onBotThinking: (thinking: boolean) => void;
+  onMoves?: () => void;
 }
 
 const LEVELS: Difficulty[] = ["easy", "easy", "medium", "hard", "hard"]; // 0..4
@@ -19,6 +20,7 @@ export class Game {
   private state: State = initialState();
   private level = 2;
   private playingAs: Color = "w";
+  private flipped = false;
   private botThinking = false;
   private selected = -1;
   private targets: { sq: number; capture: boolean }[] = [];
@@ -46,8 +48,8 @@ export class Game {
     this.promoPending = null;
     this.moveList = [];
     this.gameOver = false;
+    this.flipped = as === "b";
     this.botThinking = false;
-    window.clearTimeout(this.botTimer);
     this.botTimer = undefined;
     this.render();
     this.cb.onStatus(as === "w" ? "You play White" : "You play Black", "accent");
@@ -105,7 +107,7 @@ export class Game {
   private makeHumanMove(m: Move) {
     const label = san(this.state, m);
     this.state = apply(this.state, m);
-    this.pushMove(label, "w");
+    this.pushMove(label, this.playingAs);
     this.selected = -1;
     this.targets = [];
     this.render();
@@ -123,7 +125,7 @@ export class Game {
       const { move } = pickMove(this.state, LEVELS[this.level], Date.now() & 0xffff);
       const label = san(this.state, move);
       this.state = apply(this.state, move);
-      this.pushMove(label, "b");
+      this.pushMove(label, this.playingAs === "w" ? "b" : "w");
       this.botThinking = false;
       this.render();
       this.cb.onBotThinking(false);
@@ -186,10 +188,58 @@ export class Game {
         ? { from: this.state.hist[this.state.hist.length - 1].from, to: this.state.hist[this.state.hist.length - 1].to }
         : null,
       checkSq,
-      flipped: this.playingAs === "b",
+      flipped: this.flipped,
     };
     this.boardView.render(vm);
     this.cb.onScore(materialScoreText(materialDiff(this.state.board)));
+    this.cb.onMoves?.();
+  }
+
+  resign() {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    window.clearTimeout(this.botTimer);
+    this.botTimer = undefined;
+    this.botThinking = false;
+    this.cb.onStatus("You resigned — bot wins", "warn");
+  }
+
+  flip() {
+    this.flipped = !this.flipped;
+    this.render();
+  }
+
+  takeBack() {
+    if (this.botThinking) { window.clearTimeout(this.botTimer); this.botTimer = undefined; this.botThinking = false; }
+    const n = this.state.turn === this.playingAs ? 2 : 1;
+    for (let i = 0; i < n && this.state.snaps.length > 0; i++) this.state = undo(this.state);
+    this.gameOver = false;
+    this.selected = -1;
+    this.targets = [];
+    this.promoPending = null;
+    this.rebuildMoveList();
+    this.render();
+    this.cb.onStatus(this.playingAs === "w" ? "You play White" : "You play Black", "accent");
+  }
+
+  // Re-derive moveList from the (possibly shortened) history so it stays in
+  // sync after takeBack. SAN is recomputed by replaying from the initial state.
+  private rebuildMoveList() {
+    const list: { n: number; white: string; black: string }[] = [];
+    let s = initialState();
+    for (const m of this.state.hist) {
+      const label = san(s, m);
+      const nn = s.full;
+      if (s.turn === "w") {
+        if (!list[nn - 1]) list[nn - 1] = { n: nn, white: label, black: "" };
+        else list[nn - 1].white = label;
+      } else {
+        if (!list[nn - 1]) list[nn - 1] = { n: nn, white: "", black: label };
+        else list[nn - 1].black = label;
+      }
+      s = apply(s, m);
+    }
+    this.moveList = list;
   }
 }
 

@@ -70,6 +70,13 @@ function buildDom(): void {
   opts.append(btnW, btnB);
   controlCard.appendChild(opts);
 
+  const opts2 = el("div", "opts");
+  const btnR = el("button", "", "Resign");
+  const btnU = el("button", "", "Take Back");
+  const btnF = el("button", "", "Flip");
+  opts2.append(btnR, btnU, btnF);
+  controlCard.appendChild(opts2);
+
   const levelCard = el("div", "card");
   levelCard.appendChild(el("h2", "", "Bot strength"));
   const lvOpts = el("div", "opts");
@@ -127,6 +134,9 @@ function buildDom(): void {
 
   btnW.onclick = () => game.newGame("w");
   btnB.onclick = () => game.newGame("b");
+  btnR.onclick = () => game.resign();
+  btnU.onclick = () => game.takeBack();
+  btnF.onclick = () => game.flip();
 
   window.__wire = {
     status,
@@ -247,6 +257,7 @@ async function boot(): Promise<void> {
         w.status.className = "tone-accent";
       }
     },
+    onMoves: () => refreshMoves(w),
   });
   wireBoardToGame();
 
@@ -266,8 +277,6 @@ async function boot(): Promise<void> {
   game.newGame("w");
 
   window.addEventListener("resize", onResize);
-  // refresh move list after each render tick
-  Laya.timer.frameLoop(20, () => refreshMoves(w));
 }
 
 boot();
