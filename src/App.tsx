@@ -400,6 +400,10 @@ export default function App() {
 // the modal/overlay pop-in. Everything else is instant.
 // ============================================================================
 const CSS = `
+/* self-hosted JetBrains Mono (terminal monospace); ligatures disabled in .app */
+@font-face{font-family:'JetBrains Mono';font-weight:400;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/jbmono-400.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-weight:500;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/jbmono-500.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-weight:700;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/jbmono-700.woff2) format('woff2')}
 :root{
   --bg:${p.bg};--surface:${p.surface};--panel:${p.panel};--border:${p.border};
   --border-focus:${p.borderFocus};--cursor:${p.cursor};--text:${p.text};
@@ -482,8 +486,8 @@ body{background:var(--bg);overflow:hidden}
 
 /* moves */
 .moves-card{flex:1;display:flex;flex-direction:column;min-height:0}
-.moves{flex:1;padding:8px 10px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;min-height:0}
-.mrow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px}
+.moves{flex:1;padding:8px 10px;overflow:auto;display:flex;flex-direction:row;flex-wrap:wrap;gap:4px;align-content:flex-start;min-height:0}
+.mrow{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
 .mno{color:var(--dim);width:22px;text-align:right}
 .mtok{border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--text)}
 .mtok.cap{color:var(--good)}
