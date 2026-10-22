@@ -1,6 +1,6 @@
-# mkident — web chess
+# chessed — web chess
 
-mkident is a browser chess game where you play against an in-app bot. The board is rendered with LayaAir 3.3.13 on canvas, wrapped in a tuistore-inspired Catppuccin-Mocha dark UI, and the opponent is a TypeScript engine running alpha-beta search directly in the page — no server round-trips between moves.
+chessed is a browser chess game where you play against an in-app bot. The board is rendered with LayaAir 3.3.13 on canvas, wrapped in a tuistore-inspired Catppuccin-Mocha dark UI, and the opponent is a TypeScript engine running alpha-beta search directly in the page — no server round-trips between moves.
 
 ## Features
 
@@ -19,7 +19,7 @@ npm i
 npm run dev
 ```
 
-The dev server starts at http://localhost:5173 (served under `/mkident/`).
+The dev server starts at http://localhost:5173 (served under `/chessed/`).
 
 ## Build
 
@@ -31,7 +31,7 @@ Type-checks with `tsc`, then emits a production bundle to `dist/`.
 
 ## Deploy
 
-Pushing to `master` builds the site and publishes it to GitHub Pages via GitHub Actions at https://NTDuck.github.io/mkident/. The `base: /mkident/` path is set in `vite.config.ts`; no repo name is hardcoded in the workflow.
+Pushing to `master` builds the site and publishes it to GitHub Pages via GitHub Actions at https://NTDuck.github.io/chessed/. The `base: /chessed/` path is set in `vite.config.ts`; no repo name is hardcoded in the workflow.
 
 ## Project Structure
 

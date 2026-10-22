@@ -1,7 +1,7 @@
 # LayaAir 3.x — Web Integration Research
 
 Scope: bootstrap a LayaAir 3.x web game **without the Laya editor** (plain HTML/JS/TS, Vite),
-sized to the window, deployed under a **sub-path on GitHub Pages** (`/mkident/`).
+sized to the window, deployed under a **sub-path on GitHub Pages** (`/chessed/`).
 Sources: the 3.3.13 lib distribution (`LayaAir_3.3.13.libs.zip`, `libs/*.js` + `types/LayaAir.d.ts`)
 and the official docs repo `layabox/layaair-doc` (English).
 
@@ -91,7 +91,7 @@ Laya.init(designW, designH).then(() => {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>mkident chess</title>
+  <title>chessed chess</title>
   <style>html,body{margin:0;padding:0;background:#1e1e2e}canvas{display:block}</style>
 </head>
 <body>
@@ -104,7 +104,7 @@ Laya.init(designW, designH).then(() => {
 // vite.config.ts
 import { defineConfig } from "vite";
 export default defineConfig({
-  base: "/mkident/",           // MUST match the GitHub Pages sub-path
+  base: "/chessed/",           // MUST match the GitHub Pages sub-path
   build: { target: "es2020", assetsInlineLimit: 0 },
   server: { port: 5173 },
 });
@@ -214,14 +214,14 @@ square sprites (`sq.hitTestPoint(px, py)`), which is exactly what a chess board 
 
 Two independent concerns:
 
-**(a) Our own JS bundle / fonts** — handled entirely by Vite's `base: "/mkident/"`. Every
+**(a) Our own JS bundle / fonts** — handled entirely by Vite's `base: "/chessed/"`. Every
 emitted asset URL is prefixed, so no runtime config needed.
 
 **(b) Laya `RES.load` asset URLs** — `Loader`/`RES` resolve relative asset URLs against
 `Laya.URL.basePath` (d.ts line ~49270: "If not set, it defaults to the path of the current
 web page. The final address will be formatted as basePath + relative URL address"; also
 `URL.basePaths` for prefix remapping and `URL.version` for cache-busting). If we loaded remote
-images we'd set `Laya.URL.basePath = "https://<user>.github.io/mkident/assets/"`. **We avoid
+images we'd set `Laya.URL.basePath = "https://<user>.github.io/chessed/assets/"`. **We avoid
 this entirely** by drawing everything with `Graphics` (§3) and using a system font stack for
 `Text.font`. Result: **zero external binary assets**, so the sub-path question is a non-issue
 at runtime.
@@ -286,7 +286,7 @@ vector primitives are simpler for chess geometry.
 ## 6. Working skeleton (Vite + TS)
 
 ```
-mkident/
+chessed/
   index.html
   entry.ts
   lib/            # vendored 3.3.13 UMD files
@@ -322,7 +322,7 @@ export class Board extends Laya.Scene {
 
 Per-frame loop: `Laya.timer.frameLoop(1, game, update)`; piece animation: `Laya.Tween`.
 
-Deploy: `vite build` → `dist/` → GitHub Pages with `base: "/mkident/"`.
+Deploy: `vite build` → `dist/` → GitHub Pages with `base: "/chessed/"`.
 
 ---
 
@@ -341,7 +341,7 @@ Deploy: `vite build` → `dist/` → GitHub Pages with `base: "/mkident/"`.
   This makes WebGL-context-loss recovery trivial (re-init + re-render).
 - **Fix a square-aspect stage** (e.g. 512×512 design) centered in the window rather than
   fluidly resizing the board; handle window resize by re-centering only.
-- **Set `vite base: "/mkident/"`** so the bundle self-locates under the Pages sub-path.
+- **Set `vite base: "/chessed/"`** so the bundle self-locates under the Pages sub-path.
 - **Skip `Laya.ui.js`/`Label`/`View.regUI`** unless a real widget is needed — `Sprite`+`Text`
   is lighter and avoids the UI JSON layer tied to the editor.
 - **Enable `Laya.Config.useRetinalCanvas = true`** for crisp piece edges on high-DPI screens.

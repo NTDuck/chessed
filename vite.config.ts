@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "/mkident/",
+  base: "/chessed/",
   build: {
     target: "es2020",
   },

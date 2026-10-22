@@ -1,4 +1,4 @@
-# mkident — Web Chess UX Specification
+# chessed — Web Chess UX Specification
 
 Interaction spec for a chess.com/lichess-style web chess game: **human vs. bot**, built as a custom chess module inside a LayaAir app (TypeScript). No external bot API.
 

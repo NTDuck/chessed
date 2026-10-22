@@ -1,4 +1,4 @@
-# mkident — Design Document (Authoritative)
+# chessed — Design Document (Authoritative)
 
 Single source of truth for implementation. Supersedes `research/LAYA.md`,
 `research/TUISTORE_STYLE.md`, `research/UX_SPEC.md` — those are research input; this file is
@@ -12,7 +12,7 @@ A web chess game: **human vs. in-app TypeScript bot** (no network, no bot API).
 
 - Rendered **entirely with LayaAir 3.3.13** (WebGL canvas; no DOM UI chrome).
 - Styled after **tuistore**: Catppuccin-Mocha dark theme, outlined panels, focus-blue borders.
-- Deployed to **GitHub Pages under `/mkident/`** via Actions; Vite build.
+- Deployed to **GitHub Pages under `/chessed/`** via Actions; Vite build.
 - Fully offline after load: vendored Laya libs + vendored cburnett piece SVGs (already in
   `assets/pieces/`).
 
@@ -252,7 +252,7 @@ Laya.init(designW, designH).then(() => {    // async! build scene inside .then()
 
 - **Vite + TypeScript (strict)**. `tsconfig.json`: `"strict": true`, `include` covers
   `src/` and `src/types/LayaAir.d.ts` (ambient global `Laya`; do not import Laya as a module).
-- `vite.config.ts`: `base: "/mkident/"` (MUST match the Pages sub-path),
+- `vite.config.ts`: `base: "/chessed/"` (MUST match the Pages sub-path),
   `build.target: "es2020"`. Vendored `lib/*.js` live in `src/lib/` (imported, bundled) or
   `public/` (copied verbatim) — either works; pick one and keep it.
 - npm scripts:
@@ -266,7 +266,7 @@ Laya.init(designW, designH).then(() => {    // async! build scene inside .then()
 ```
 
 - **GitHub Pages via Actions**: on push to `main`, `npm ci && npm run build`, upload `dist/`
-  to Pages (or `actions/deploy-pages`). Site URL: `https://<user>.github.io/mkident/`.
+  to Pages (or `actions/deploy-pages`). Site URL: `https://<user>.github.io/chessed/`.
 - Vendoring (one-time, already done for pieces; Laya libs still to fetch): download
   `LayaAir_3.3.13.libs.zip` from `github.com/layabox/LayaAir/releases` → copy
   `libs/laya.core.js`, `libs/laya.webgl_2D.js` to `src/lib/`, `types/LayaAir.d.ts` to
@@ -276,7 +276,7 @@ Laya.init(designW, designH).then(() => {    // async! build scene inside .then()
 
 ## 7. Acceptance checklist
 
-- [ ] `npm run build` succeeds (tsc strict + vite), `dist/` deployable to Pages `/mkident/`.
+- [ ] `npm run build` succeeds (tsc strict + vite), `dist/` deployable to Pages `/chessed/`.
 - [ ] Served app renders: mocha background `#1e1e2e`, 8×8 board (light `#313244` /
       dark `#181825`), coordinates, 32 pieces, outlined panels with status/moves/controls/tray.
 - [ ] Human can move by **tap-to-move** AND **drag-and-drop**; both legal and illegal
