@@ -72,9 +72,14 @@ export class BoardView extends Laya.Sprite {
     });
     window.addEventListener("pointerup", (e) => {
       if (!this.dragging) return;
+      e.preventDefault();
       const p = this.localPoint(e.clientX, e.clientY);
       if (p) this.handlePointer(p.x, p.y, "up");
       else this.endDrag();
+    });
+    // pointercancel (touch interrupt, system gesture) — ghost must not linger
+    window.addEventListener("pointercancel", () => {
+      if (this.dragging) this.endDrag();
     });
   }
 
@@ -87,9 +92,9 @@ export class BoardView extends Laya.Sprite {
     return { x: lx, y: ly };
   }
 
-  /** quick 180° tween for the board content */
+  /** Instant 180° board-content rotation (no tween). */
   flip() {
-    this.animateTo({ rotation: 180 }, 200);
+    this.rotation = 180;
   }
 
   private handlePointer(lx: number, ly: number, phase: "down" | "move" | "up") {
@@ -103,13 +108,15 @@ export class BoardView extends Laya.Sprite {
       }
       this.onMove?.(lx, ly);
     } else if (phase === "up") {
-      this.onUp?.(lx, ly);
+      // Drop the ghost BEFORE onUp: onUp may trigger a full re-render, which
+      // would re-add a live ghost on top of the landed piece.
       this.endDrag();
+      this.onUp?.(lx, ly);
     }
   }
 
   private endDrag() {
-    this.dragGhost?.removeFromParent();
+    this.dragGhost?.removeSelf();
     this.dragGhost = null;
     this.dragging = null;
   }
@@ -225,9 +232,9 @@ export class BoardView extends Laya.Sprite {
       const [f, r] = this.disp(t.sq, vm.flipped);
       const dot = new Laya.Sprite();
       if (t.capture) {
-        dot.graphics.drawCircle(c / 2, c / 2, c * 0.42, null, 3, "rgba(0,0,0,0.25)");
+        dot.graphics.drawCircle(c / 2, c / 2, c * 0.42, null, 3, palette.captureRing);
       } else {
-        dot.graphics.drawCircle(c / 2, c / 2, c * 0.14, "rgba(0,0,0,0.25)");
+        dot.graphics.drawCircle(c / 2, c / 2, c * 0.14, palette.destDot);
       }
       dot.x = f * c;
       dot.y = r * c;

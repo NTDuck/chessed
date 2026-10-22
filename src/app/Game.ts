@@ -3,7 +3,7 @@ import {
   Color, Move, State, Status, initialState, legalMoves, apply, san, inCheck,
   materialDiff, undo,
 } from "../chess/engine";
-import { Difficulty, pickMove } from "../chess/bot";
+import { Difficulty, pickMove, botChoices } from "../chess/bot";
 import { BoardView, ViewModel } from "./BoardView";
 
 export interface GameCallbacks {
@@ -11,6 +11,7 @@ export interface GameCallbacks {
   onScore: (text: string) => void;
   onPromo: (choices: ("q" | "r" | "b" | "n")[], pick: (c: "q" | "r" | "b" | "n") => void) => void;
   onBotThinking: (thinking: boolean) => void;
+  onChoices?: (choices: { san: string; score: number }[]) => void;
   onMoves?: () => void;
 }
 
@@ -193,6 +194,12 @@ export class Game {
     this.boardView.render(vm);
     this.cb.onScore(materialScoreText(materialDiff(this.state.board)));
     this.cb.onMoves?.();
+    this.cb.onChoices?.(this.layaChoices());
+  }
+
+  /** Top-8 ranked bot candidates for the side to move (display-only). */
+  layaChoices(): { san: string; score: number }[] {
+    return botChoices(this.state, LEVELS[this.level]);
   }
 
   resign() {

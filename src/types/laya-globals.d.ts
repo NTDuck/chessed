@@ -64,7 +64,7 @@ declare namespace Laya {
     addChild(node: Sprite | Graphics): Sprite | Graphics | this;
     numChildren: number;
     removeChildAt(index: number): void;
-    removeFromParent(): void;
+    removeSelf(): void;
     on(type: string, caller: unknown, handler: (...args: unknown[]) => void): void;
     animateTo(props: Record<string, number>, duration?: number): void;
   }

@@ -9,7 +9,9 @@ export const palette = {
   text: "#cdd6f4",
   sub: "#a6adc8",
   dim: "#6c7086",
+  faint: "#45475a",
   accent: "#89b4fa",
+  lav: "#b4befe",
   peach: "#fab387",
   good: "#a6e3a1",
   warn: "#f9e2af",
@@ -21,14 +23,15 @@ export const palette = {
   boardDark: "#181825",
 
   // Highlight tints (derived, in-palette)
-  lastMove: "rgba(137,180,250,0.35)", // accent #89b4fa tint
-  checkGlow: "rgba(255,163,135,0.4)", // peach #fab387-based
-  destDot: "rgba(0,0,0,0.25)",
+  lastMove: "rgba(243,139,168,0.35)", // bad #f38ba8 tint
+  checkGlow: "rgba(250,179,135,0.45)", // peach #fab387-based
+  destDot: "rgba(137,180,250,0.85)", // accent #89b4fa
+  captureRing: "rgba(137,180,250,0.35)", // accent ring for captures
   dragIllegal: "rgba(243,139,168,0.15)", // from --bad
   dragHole: "rgba(0,0,0,0.3)",
 } as const;
 
-export const FONT = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+export const FONT = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 // Piece point values for the captured tray
 export const PIECE_POINTS: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };

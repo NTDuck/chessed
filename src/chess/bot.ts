@@ -1,7 +1,7 @@
 // Alpha-beta bot over engine.ts. Synchronous; Hard depth-3 + quiescence targets <500 ms.
 import {
   State, Move, Color, Piece,
-  initialState, cloneState, apply, legalMoves, inCheck, materialDiff,
+  initialState, cloneState, apply, legalMoves, inCheck, materialDiff, san,
 } from "./engine";
 
 export type Difficulty = "easy" | "medium" | "hard";
@@ -182,6 +182,20 @@ export function pickMove(state: State, difficulty: Difficulty, seed: number): { 
   // deterministic-with-seed choice among ties
   const idx = tie > 1 ? Math.floor(rng() * tie) : 0;
   return { move: best[idx], ms: Date.now() - t0 };
+}
+
+// Display-only: rank every legal move for the side to move (same depth as
+// pickMove) and return the top candidates as SAN + score. Never used by the
+// bot itself; the Laya choices panel renders this.
+export function botChoices(state: State, difficulty: Difficulty): { san: string; score: number }[] {
+  const depth = difficulty === "easy" ? 1 : difficulty === "medium" ? 2 : 3;
+  const moves = legalMoves(state);
+  const scored = moves.map((m) => ({
+    m,
+    s: -search(apply(state, m), depth, -Infinity, Infinity),
+  }));
+  scored.sort((a, b) => b.s - a.s);
+  return scored.slice(0, 8).map((x) => ({ san: san(state, x.m), score: x.s }));
 }
 
 // Convenience for tests: fresh-game bot sanity
