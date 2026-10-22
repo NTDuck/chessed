@@ -44,6 +44,37 @@ export function fenToState(fen: string): State {
   return { board, turn, castle, ep, half, full, hist: [], snaps: [] };
 }
 
+// Serialize a State back to a standard FEN string.
+export function stateToFen(s: State): string {
+  let rows: string[] = [];
+  for (let r = 7; r >= 0; r--) {
+    let row = "";
+    let empty = 0;
+    for (let f = 0; f < 8; f++) {
+      const p = s.board[r * 8 + f];
+      if (!p) { empty++; continue; }
+      if (empty > 0) { row += empty; empty = 0; }
+      row += p.c === "w" ? p.t.toUpperCase() : p.t;
+    }
+    if (empty > 0) row += empty;
+    rows.push(row);
+  }
+  const cast = (s.castle.wk ? "K" : "") + (s.castle.wq ? "Q" : "") +
+    (s.castle.bk ? "k" : "") + (s.castle.bq ? "q" : "");
+  let ep = "-";
+  if (s.ep >= 0) {
+    ep = String.fromCharCode(97 + (s.ep % 8)) + String(8 - Math.floor(s.ep / 8));
+  }
+  return [
+    rows.join("/"),
+    s.turn,
+    cast || "-",
+    ep,
+    String(s.half),
+    String(s.full),
+  ].join(" ");
+}
+
 // ---------------------------------------------------------------- search
 
 // Thin shallow negamax around bot.evaluate (mirrors bot.search, no quiescence).
@@ -81,6 +112,11 @@ function scoreMoves(s: State, depth: number): { m: Move; cp: number }[] {
 
 // ---------------------------------------------------------------- API
 
+
+// White-perspective centipawn evaluation of an in-memory State (no FEN round-trip).
+export function stateEval(s: State): number {
+  return evalWhite(s, SHALLOW_DEPTH);
+}
 export function analyzePosition(fen: string): { evalCp: number; bestMoveSan: string } {
   const s = fenToState(fen);
   const scored = scoreMoves(s, SHALLOW_DEPTH);

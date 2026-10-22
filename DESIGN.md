@@ -10,7 +10,9 @@ what you build.
 
 A web chess game: **human vs. in-app TypeScript bot** (no network, no bot API).
 
-- Rendered **entirely with LayaAir 3.3.13** (WebGL canvas; no DOM UI chrome).
+- Board rendered as **inline SVG in React**; all UI chrome is **DOM** (React).
+- **LayaAir 3.3.13** is vendored and used **only for its rAF-based `Laya.timer` animation
+  clock** (no canvas rendering).
 - Styled after **tuistore**: Catppuccin-Mocha dark theme, outlined panels, focus-blue borders.
 - Deployed to **GitHub Pages under `/chessed/`** via Actions; Vite build.
 - Fully offline after load: vendored Laya libs + vendored cburnett piece SVGs (already in
@@ -24,36 +26,39 @@ Two strict layers:
 
 1. **Game model (plain TS, zero Laya imports)** — single source of truth. All state lives here:
    position, history, status, selection. The view never owns game state.
-2. **Laya view layer** — pure rendering of model state. Rebuilt/patched from state on every
-   change. This makes WebGL context-loss recovery trivial (re-init + re-render from state).
+2. **React view layer** — the board is inline SVG and all UI chrome is DOM, rendered in
+   `src/App.tsx`. It observes the model via `useSyncExternalStore` and re-renders from state
+   on every change. LayaAir contributes only the `Laya.timer` animation clock (no canvas).
 
 ### Module layout
 
 ```
 src/
-  lib/
-    laya.core.js          # vendored 3.3.13 UMD (from GitHub release zip)
-    laya.webgl_2D.js      # vendored 3.3.13 UMD
-  types/
-    LayaAir.d.ts          # vendored ambient d.ts (global `Laya` namespace)
+  App.tsx                 # React board (inline SVG) + all DOM chrome + styles
+  main.tsx                # React root (mounts into <div id="laya-host">)
+  theme.ts                # shared palette constants (single source)
   chess/
     engine.ts             # pure rules engine — NO Laya/DOM deps, unit-testable
     bot.ts                # alpha-beta bot — imports only engine
+    analysis.ts           # eval layer: stateEval, analyzePosition, candidateMoves, classifyMove
   app/
-    main.ts               # entry: Laya.init, build views, start frameLoop
-    BoardView.ts          # Laya Sprite: 64 squares, coordinates, piece layer, highlight overlay
-    Panels.ts             # status banner, move list, controls, captured tray (Laya nodes)
-    Game.ts               # glue: model ↔ views, input routing, bot scheduling
+    Game.ts               # model + UI snapshot; subscribe() for React (useSyncExternalStore)
+    pieces.tsx            # 12 cburnett piece SVG inner-markup strings
+  types/
+    laya.d.ts             # ambient types: declares only Laya.timer
   assets/pieces/*.svg     # 12 cburnett SVGs (wK wQ wR wB wN wP bK bQ bR bB bN bP) — already vendored
+public/
+  lib/
+    laya.core.js          # vendored 3.3.13 UMD (timer only)
+    laya.webgl_2D.js      # vendored 3.3.13 UMD (timer only)
 index.html
 vite.config.ts
 tsconfig.json
 ```
 
 No npm Laya package exists (`@layaair/laya-core` is a 404 on the registry) — **do not** add one;
-vendor the UMD files. Import order in `main.ts` is source-order and mandatory:
-`core → webgl_2D` (`import "/lib/laya.core.js"; import "/lib/laya.webgl_2D.js";`).
-Skip `laya.ui.js` — use `Sprite`+`Text` nodes only.
+the UMD files are vendored under `public/lib/` and loaded via a `<script>` tag in `index.html`
+(not imported in `main.tsx`); they provide the `Laya.timer` global only.
 
 ### `engine.ts` (pure)
 
@@ -85,35 +90,32 @@ Skip `laya.ui.js` — use `Sprite`+`Text` nodes only.
 
 ### `app/`
 
-- **BoardView**: container with layers bottom→top: squares (64 `Sprite`s,
-  `graphics.drawRect`, light `#313244` / dark `#181825`) → base highlight overlay
-  (last-move, check glow) → piece layer (SVG-texture sprites, ~0.9× square) → top overlay
-  (selection ring, destination dots, ghost piece). File letters inside bottom-row squares,
-  rank numbers inside left-column squares, font ~0.22× square, color = opposite square tone
-  for contrast. White at bottom by default; flip rotates 180° (~200 ms tween) and swaps
-  coordinate placement. Square size = `boardSide/8`; everything derives from it.
-- **Panels** (Laya nodes, tuistore tokens): status banner (top), right column with move list
-  (SAN rows, auto-scroll to newest), controls, captured tray (two rows + material advantage,
-  point values P=1 N=3 B=3 R=5 Q=9).
-- **Game** glue: owns `engine` state, routes input, schedules bot (`setTimeout` + generation
-  counter so spammed New Games invalidate pending thinks), re-renders from state on every
-  mutation.
+- **Board** (`App.tsx`): inline SVG, layers bottom→top: squares (64, light `#313244` /
+  dark `#181825`) → highlight overlay (last-move tint, check glow) → piece layer (cburnett
+  SVG markup, ~0.9× square) → top overlay (selection ring, destination dots). File letters
+  inside bottom-row squares, rank numbers inside left-column squares, font ~0.22× square,
+  color = opposite square tone for contrast. White at bottom by default; flip rotates 180°.
+  Square size = `boardSide/8`; everything derives from it.
+- **Chrome** (`App.tsx`, DOM, tuistore tokens): status banner, score, control icon buttons,
+  ELO range slider, left vertical eval bar (`.evalbar`/`.eval-fill`), move list (SAN rows +
+  move-quality symbols, auto-scroll to newest), captured tray (material advantage, point
+  values P=1 N=3 B=3 R=5 Q=9), promo modal, footer hint bar.
+- **Game** (`Game.ts`): pure game controller — owns the chess `State` + a UI snapshot,
+  exposes `subscribe()`; React observes it via `useSyncExternalStore`. No rendering code.
 
-### Pieces as textures
+### Pieces as inline SVG
 
-Load the 12 vendored SVGs via Laya `RES` (3.x supports SVG assets). On load, create a texture
-per piece at **2× square size** for crispness. **Fallback if SVG loading proves flaky in the
-target browsers: rasterize the SVGs to PNG at build time** (script in `scripts/`) and load the
-PNGs — identical code path (`RES.load` url swap). cburnett pieces are single-path fill-based
-(white = white fill + dark outline, black = dark fill), so they work on the mocha board
-as-is; no tinting needed.
+`src/app/pieces.tsx` holds the 12 cburnett piece SVG inner-markup strings, inlined directly
+into the board SVG (no asset loading). cburnett pieces are single-path fill-based (white =
+white fill + dark outline, black = dark fill), so they work on the mocha board as-is; no
+tinting needed.
 
 ---
 
 ## 3. Theme tokens (tuistore mocha — exact values)
 
-CSS/custom-property contract; Laya views read the same constants from one shared
-`src/theme.ts` module (single source for DOM-free canvas colors).
+CSS/custom-property contract; the React/DOM + inline-SVG view reads the same constants from
+one shared `src/theme.ts` module (single source for all colors).
 
 | Token | Value | Use |
 |---|---|---|
@@ -145,11 +147,15 @@ panels. Modals: `--panel` bg, blue border, centered over `--overlay`.
 4. Four state colors, no new hues: accent `#89b4fa` (selection/legal dots/last-move),
    peach `#fab387` (check), `#f38ba8` (loss/invalid), `#a6e3a1` (win/turn).
 5. Role-based text only: `#cdd6f4` / `#a6adc8` / `#6c7086`.
-6. Monospace chrome: `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
-   12/14/20 px steps; bold only for title + entry names.
+6. Display face: **Amazon Ember** (self-hosted serif, woff2 weights 400/700 under
+   `public/assets/fonts/`), replacing the old monospace chrome; 12/14/20 px steps; bold
+   only for title + entry names.
 7. Modals: centered, `#181825`, blue rounded border, `rgba(0,0,0,.4)` dim, 8px 16px padding.
-8. One animation only (0.15 s modal pop-in, `cubic-bezier(0.22,1,0.36,1)`); piece moves
-   tween ≤ 200 ms; everything else instant color change.
+8. Pixelated motion set (steps()-eased, no easing curves): `piemove` (180ms steps(4)),
+   `capdissolve` (240ms steps(4)), `chkpulse` (1s steps(2) ∞), `dotpulse` (1.2s steps(2) ∞),
+   `lmflash` (300ms steps(3)), `tokpop` (150ms steps(3)), plus the pre-existing `popin`
+   modal (0.15s cubic-bezier) and ONE transition — `.eval-fill` height (.3s steps(6)).
+   `prefers-reduced-motion` collapses all of them.
 9. 8px spacing unit; list rows single-line with leading colored dot/glyph markers.
 10. Footer hint bar: single line, 12px, `#6c7086`, hide trailing hints on narrow widths
     (never wrap, never scroll).
@@ -186,20 +192,21 @@ Two equivalent input paths feeding the same handlers; both must work (mouse and 
 - **Selection**: `#89b4fa` ring per above.
 
 ### Input lock & edge cases
-- **Bot thinking**: all board input inert; controls stay live. New Game cancels the pending
-  bot think (generation counter invalidates the timer).
-- **New Game**: idempotent, spam-safe; resets state + re-renders initial position.
+- **Bot thinking**: all board input inert; controls stay live. A new game (Play-as)
+  cancels the pending bot think (generation counter invalidates the timer).
+- **New game (Play-as)**: idempotent, spam-safe; resets state + re-renders initial position.
 - **Resize**: board re-measures, stays **1:1, centered** (side = min(w,h) of board region,
   clamped to a minimum); all derived sizes (pieces, highlights, coordinates) rescale;
   mid-drag resize cancels the drag gracefully.
 - **Mobile touch**: touchstart/move/end; no scroll/zoom over the board
   (`touch-action: none` equivalent on the board node); tap targets ≥ 44 px; no hover UI.
 
-### Controls (6, tap targets ≥ 44 px)
-New Game · Resign (disabled when over) · Take Back (undo human+bot pair; disabled when over
-or no human move) · Flip Board (200 ms rotation) · Difficulty Easy/Med/Hard (segmented;
-effective from bot's next move) · Play-as White/Black (fresh game on mid-game change,
-auto-flips board so human is at bottom).
+### Controls (5 icon buttons, tap targets ≥ 44 px)
+Play-as White · Play-as Black (each starts a fresh game in that color — this replaces the
+old New Game button; Black auto-flips the board so the human is at the bottom) · Resign
+(disabled when over) · Take Back (undo human+bot pair; disabled when over or no human
+move) · Flip Board (200 ms rotation). Difficulty is the **ELO range slider** (5 named
+ticks 300/700/1100/1500/1900, active tick highlighted, live value readout) — not a button.
 
 Status banner states (color-coded): your turn (`--good`) / bot thinking (`--sub`) /
 check (`--peach`) / checkmate win (`--good`) / loss (`--bad`) / draw-stalemate /
@@ -207,54 +214,26 @@ draw-material / draw-50 / draw-repetition (`--warn`).
 
 ---
 
-## 5. Laya integration notes (facts from 3.3.13)
+## 5. LayaAir integration notes (facts from 3.3.13)
 
-- **Bootstrap** (no editor, no div — engine creates its own canvas):
+LayaAir 3.3.13 is vendored under `public/lib/` (`laya.core.js` + `laya.webgl_2D.js`) and loaded
+via a `<script>` tag in `index.html`. It is used **only as `Laya.timer`** — an rAF-backed
+`callLater`/`clear` clock that drives the animation/render tick. There is **no `Laya.init`, no
+`Laya.stage`, no WebGL canvas, no `Laya.Text`/`Graphics`/`RES` asset loading** in the shipped
+app. Ambient types for the single `Laya.timer` surface live in `src/types/laya.d.ts`.
 
-```ts
-import "/lib/laya.core.js";
-import "/lib/laya.webgl_2D.js";
-Laya.Config.useRetinalCanvas = true;        // crisp pieces on high-DPI
-Laya.init(designW, designH).then(() => {    // async! build scene inside .then()
-  const stage = Laya.stage;
-  stage.bgColor = "#1e1e2e";
-  stage.scaleMode = "none";                 // we manage size ourselves (fixed square stage)
-  // add board + panels...
-});
-```
-
-- **No `tap` event in 3.x.** No `Event.TAP`/`TOUCH_TAP` constants exist. Event strings that
-  ship: `mousedown`, `mouseup`, `mousemove`, `mouseover`, `mouseout`, `mousedrag`,
-  `mousedragend`, `click`, `touchstart`, `touchmove`, `touchend`, `touchcancel`.
-  Synthesize tap from `mousedown`/`click` (desktop) + `touchstart`/`touchend` (mobile);
-  drag = `mousedown`/`touchstart` + `stage`-level `mousemove`/`touchmove` +
-  `mouseup`/`touchend`. Event objects expose `globalX/globalY` and `localX/localY`;
-  `pointToNode(x, y)` resolves the topmost sprite under a point.
-- **Per-frame loop**: `Laya.timer.frameLoop(1, this, update)`. Piece animation:
-  `Laya.Tween.to(target, {x, y, alpha}, ms, ease)`; cancel with `Tween.killTweens(target)`.
-- **Vector drawing** (`sprite.graphics`): `drawRect`, `drawRoundRect`, `drawCircle`,
-  `drawLine`, path API (`beginPath/moveTo/lineTo/closePath/fill/stroke`), `clear()`.
-  Square sizes derive from `boardSide/8`.
-- **Text**: `new Laya.Text()` — `text`, `fontSize`, `color` (hex string), `bold`, `align`,
-  `font` (use `"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"`).
-- **WebGL context loss**: 3.3.13 exposes no recovery hook. Strategy: keep all state in the
-  plain-JS model; on `visibilitychange` → visible, re-run `Laya.init` and rebuild the scene
-  tree from state (cheap: vector board + 32 piece sprites). Never treat rendered pixels as
-  source of truth.
-- **Assets**: zero external binary assets except the 12 piece SVGs (relative `./assets/...`
-  URLs); Vite `base` handles sub-path resolution, so `RES` base-path config is unnecessary.
-- **Resize**: no automatic resize — handle `window` `resize` (debounced) yourself:
-  recompute board side, re-center, rescale layers. Fixed 1:1 stage is more stable than fluid.
+The board and all UI chrome are React (inline SVG + DOM), so there is no canvas to manage:
+no context-loss recovery, no per-frame loop, no event-synthesis concerns.
 
 ---
 
 ## 6. Build & deploy
 
 - **Vite + TypeScript (strict)**. `tsconfig.json`: `"strict": true`, `include` covers
-  `src/` and `src/types/LayaAir.d.ts` (ambient global `Laya`; do not import Laya as a module).
+  `src/` and `src/types/laya.d.ts` (ambient `Laya.timer`; do not import Laya as a module).
 - `vite.config.ts`: `base: "/chessed/"` (MUST match the Pages sub-path),
-  `build.target: "es2020"`. Vendored `lib/*.js` live in `src/lib/` (imported, bundled) or
-  `public/` (copied verbatim) — either works; pick one and keep it.
+  `build.target: "es2020"`. The vendored Laya UMD files live in `public/lib/` (copied
+  verbatim into `dist/`).
 - npm scripts:
 
 ```json
@@ -267,10 +246,9 @@ Laya.init(designW, designH).then(() => {    // async! build scene inside .then()
 
 - **GitHub Pages via Actions**: on push to `main`, `npm ci && npm run build`, upload `dist/`
   to Pages (or `actions/deploy-pages`). Site URL: `https://<user>.github.io/chessed/`.
-- Vendoring (one-time, already done for pieces; Laya libs still to fetch): download
-  `LayaAir_3.3.13.libs.zip` from `github.com/layabox/LayaAir/releases` → copy
-  `libs/laya.core.js`, `libs/laya.webgl_2D.js` to `src/lib/`, `types/LayaAir.d.ts` to
-  `src/types/`.
+- Vendoring (one-time, already done): pieces SVGs are in `src/assets/pieces/`; the Laya UMD
+  libs are in `public/lib/` (`laya.core.js`, `laya.webgl_2D.js`) and the ambient type file is
+  `src/types/laya.d.ts`.
 
 ---
 
@@ -285,8 +263,9 @@ Laya.init(designW, designH).then(() => {    // async! build scene inside .then()
       check peach glow — all in-palette.
 - [ ] Bot replies **within 2 s on Hard** (and faster on Easy/Medium); "bot thinking…" shown;
       board input inert while thinking.
-- [ ] All 6 controls work: New Game (spam-safe), Resign, Take Back (pair undo), Flip Board,
-      Difficulty (3 levels, real depth difference observable), Play-as (fresh game + auto-flip).
+- [ ] All 5 controls work: Play-as White/Black (fresh game, spam-safe), Resign,
+      Take Back (pair undo), Flip Board; plus the ELO slider (5 named levels, real
+      depth difference observable).
 - [ ] Status detection fires correctly: check, checkmate (win/loss), stalemate,
       insufficient material, 50-move, threefold repetition.
 - [ ] Move list shows SAN with `+`/`#`; captured tray shows pieces + material advantage.
@@ -294,4 +273,4 @@ Laya.init(designW, designH).then(() => {    // async! build scene inside .then()
       no layout breakage.
 - [ ] Touch works on a mobile viewport: tap + drag with no scroll/zoom fighting over the board.
 - [ ] No console errors on load, normal play, spam-New-Game, and tab background/foreground
-      cycle (context-loss re-render path).
+      cycle (React re-renders from state).

@@ -67,7 +67,9 @@ Pure TypeScript module, no DOM/Laya dependencies (unit-testable). Must produce f
 
 ## 4. Bot
 
-- **Difficulty selectable**: Easy / Medium / Hard (persist choice across games while the app runs).
+- **Difficulty selectable**: a 5-step **ELO range slider** with named ticks 300 / 700 /
+  1100 / 1500 / 1900, the active tick highlighted and a live value readout (replaces the
+  old segmented buttons). Persist the choice across games while the app runs.
 - **Algorithm**: alpha-beta search over the rules engine above.
   - Easy → depth **1** (plus a slight random tie-break among equal-best moves so it feels less deterministic).
   - Medium → depth **2**.
@@ -85,12 +87,15 @@ Layout: board centered-left; status banner top; controls + move list in a right 
 - **Status banner** (top, always visible): text states — "Your turn (White)", "Bot is thinking…", "Check!", "Checkmate — you win / bot wins", "Stalemate — draw", "Draw (insufficient material / 50-move / repetition)". Color-coded (green = your turn, red = check/loss, amber = draw).
 - **Move list**: SAN (e.g. `1. e4 e5 2. Nf3 Nc6 …`, check suffix `+`, mate `#`). Scrollable, auto-scrolls to the newest entry after each move. Optional: click a move to journey the board to that position (replay forward/backward with the full rules engine; returns to "live" on the latest move). Journey is nice-to-have; scroll + auto-follow is required.
 - **Controls** (buttons, distinct tap targets ≥ 44 px):
-  - **New Game** — reset board, history, clocks-of-state; re-applies Play-as and Difficulty selections.
+  - **Play as White / Play as Black** — each starts a fresh game in that color (this
+    replaces the old New Game button; Black auto-flips the board so the human is at the
+    bottom); re-applies the current ELO slider level.
   - **Resign** — human resigns; game ends with the bot winning. Disabled (or no-op) when the game is already over.
   - **Take Back** — undo the most recent **human+bot pair** (i.e., roll back to the position before the human's last move; if only a human move exists with no bot reply, undo that single move). Repeated taps step back by pairs. Disabled when no human move exists or game is over… actually allow it after game-over to continue play? Keep simple: disabled after game is over.
   - **Flip Board** — toggle orientation (animation: 180° rotation, ~200 ms).
-  - **Difficulty selector** — Easy/Medium/Hard segmented control; takes effect from the bot's *next* move.
-  - **Play as White/Black selector** — toggles which side the human is. Changing side mid-game starts a fresh game with the bot to move if needed (simplest correct behavior). Auto-flips the board so the human's color is at the bottom.
+  - **ELO slider** — 5 named ticks (300/700/1100/1500/1900), active tick highlighted, live
+    value readout; takes effect from the bot's *next* move.
+  - *Play-as doubles as New Game; no separate side toggle.*
 - **Captured-pieces tray**: two rows (bot-captured / human-captured) showing small piece icons in capture order, plus the material advantage score (e.g. `+3`) shown next to the leading side, using the same point values as the eval (P=1, N=3, B=3, R=5, Q=9).
 - **Best-move hint**: optional feature — **skipped** in v1 (not implemented).
 

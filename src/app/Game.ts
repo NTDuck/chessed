@@ -16,6 +16,7 @@ import {
   Move,
 } from "../chess/engine";
 import { pickMove, botChoices, Difficulty } from "../chess/bot";
+import { stateToFen, stateEval, classifyMove } from "../chess/analysis";
 
 export type Tone = "accent" | "warn" | "good" | "bad" | "dim";
 
@@ -29,6 +30,12 @@ export interface MoveLabel {
   captured: boolean;
   isCheck: boolean;
   isMate: boolean;
+  /** Chess-move symbol from analysis.classifyMove ("", "★", "?", "??", "???", "!!"). */
+  symbol: string;
+  /** classifyMove tone for the move-quality symbol. */
+  tone: "good" | "warn" | "bad" | "brilliant";
+  /** classifyMove label (e.g. "Brilliant move"). */
+  verdict: string;
 }
 
 export interface Snap {
@@ -38,6 +45,8 @@ export interface Snap {
   selected: number;
   targets: number[];
   lastMove: { from: number; to: number } | null;
+  /** Square of the last capture (to-square), or null. */
+  lastCapture: number | null;
   checkSq: number;
   flipped: boolean;
   statusText: string;
@@ -50,6 +59,8 @@ export interface Snap {
   /** True while the promotion picker is open (promoPending set). */
   promoOpen: boolean;
   moveList: MoveLabel[][];
+  /** White-perspective centipawn evaluation of the current position (for the eval bar). */
+  evalCp: number;
   choices: Choice[];
 }
 
@@ -69,14 +80,16 @@ export class Game {
   private selected = -1;
   private targets: number[] = [];
   private lastMove: { from: number; to: number } | null = null;
+  private lastCapture: number | null = null;
   private checkSq = -1;
   private flipped = false;
-  private botTimer: number | undefined;
+  private botTimer: number | null = null;
   private promoPending: Move | null = null;
   private moveList: MoveLabel[][] = [];
   private gameOver = false;
   private statusText = "You play White";
   private statusTone: Tone = "accent";
+  private evalCp = 0;
   private scoreText = "0.0";
   private thinking = false;
   private promo: "q" | "r" | "b" | "n" | null = null;
@@ -105,6 +118,7 @@ export class Game {
       selected: this.selected,
       targets: this.targets,
       lastMove: this.lastMove,
+      lastCapture: this.lastCapture,
       checkSq: this.checkSq,
       flipped: this.flipped,
       statusText: this.statusText,
@@ -115,8 +129,9 @@ export class Game {
       level: this.level,
       promo: this.promo,
       promoOpen: this.promoPending !== null,
-      choices: this.choices,
       moveList: this.moveList,
+      choices: this.choices,
+      evalCp: this.evalCp,
     };
   }
 
@@ -132,6 +147,7 @@ export class Game {
     this.selected = -1;
     this.targets = [];
     this.lastMove = null;
+    this.lastCapture = null;
     this.checkSq = -1;
     this.clearTimer();
     this.promoPending = null;
@@ -230,6 +246,7 @@ export class Game {
     this.state = st;
     this.selected = -1;
     this.targets = [];
+    this.lastCapture = null;
     this.rebuildMoveList();
     this.settle();
     this.recomputeChoices();
@@ -239,47 +256,52 @@ export class Game {
 
   // ---- internals ----------------------------------------------------------
   private makeHumanMove(m: Move): void {
+    const before = this.state;
     const cap = isCapture(this.state.board, m);
     const label = san(this.state, m);
     this.state = apply(this.state, m);
     this.lastMove = { from: m.from, to: m.to };
-    this.pushMove(label, cap);
-    this.selected = -1;
-    this.targets = [];
+    this.lastCapture = cap ? m.to : null;
+    this.pushMove(label, cap, classifyMove(stateToFen(before), label));
     this.settle();
     this.recomputeChoices();
     if (!this.gameOver) this.botGo();
     this.notify();
   }
-
   private botGo(): void {
     this.clearTimer();
     this.thinking = true;
     this.notify();
     const delay = 250 + Math.floor(Math.random() * 450);
-    this.botTimer = window.setTimeout(() => {
-      this.botTimer = undefined;
-      const { move: mv } = pickMove(this.state, LEVELS[this.level], Date.now() & 0xffff);
-      const cap = isCapture(this.state.board, mv);
-      const label = san(this.state, mv);
-      this.state = apply(this.state, mv);
-      this.lastMove = { from: mv.from, to: mv.to };
-      this.pushMove(label, cap);
-      this.thinking = false;
-      this.settle();
-      this.recomputeChoices();
-      this.notify();
-    }, delay);
+    // Think delay via setTimeout — the React/SVG UI mounts no Laya canvas,
+    // so Laya.timer is absent in headless preview; setTimeout always works.
+    this.botTimer = window.setTimeout(() => this.botFire(), delay);
+  }
+
+  private botFire(): void {
+    this.botTimer = null;
+    const before = this.state;
+    const { move: mv } = pickMove(this.state, LEVELS[this.level], Date.now() & 0xffff);
+    const cap = isCapture(this.state.board, mv);
+    const label = san(this.state, mv);
+    this.state = apply(this.state, mv);
+    this.lastMove = { from: mv.from, to: mv.to };
+    this.lastCapture = cap ? mv.to : null;
+    this.pushMove(label, cap, classifyMove(stateToFen(before), label));
+    this.thinking = false;
+    this.settle();
+    this.recomputeChoices();
+    this.notify();
   }
 
   private clearTimer(): void {
-    if (this.botTimer !== undefined) {
+    if (this.botTimer !== null) {
       window.clearTimeout(this.botTimer);
-      this.botTimer = undefined;
+      this.botTimer = null;
     }
   }
 
-  private pushMove(sanLabel: string, isCap: boolean): void {
+  private pushMove(sanLabel: string, isCap: boolean, cls: { symbol: string; label: string; tone: MoveLabel["tone"] }): void {
     const isCheck = inCheck(this.state);
     const isMate = status(this.state) === "checkmate";
     const entry: MoveLabel = {
@@ -287,6 +309,9 @@ export class Game {
       captured: isCap,
       isCheck,
       isMate,
+      symbol: cls.symbol,
+      tone: cls.tone,
+      verdict: cls.label,
     };
     const lastRow = this.moveList[this.moveList.length - 1];
     if (lastRow && lastRow.length < 2) lastRow.push(entry);
@@ -300,12 +325,16 @@ export class Game {
       const mv = this.state.hist[i];
       const label = san(st, mv);
       const cap = isCapture(st.board, mv);
+      const cls = classifyMove(stateToFen(st), label);
       st = apply(st, mv);
       const entry: MoveLabel = {
         san: label,
         captured: cap,
         isCheck: inCheck(st),
         isMate: status(st) === "checkmate",
+        symbol: cls.symbol,
+        tone: cls.tone,
+        verdict: cls.label,
       };
       const lastRow = this.moveList[this.moveList.length - 1];
       if (lastRow && lastRow.length < 2) lastRow.push(entry);
@@ -348,6 +377,7 @@ export class Game {
       }
     }
     this.scoreText = materialScoreText(materialDiff(this.state.board));
+    this.evalCp = stateEval(this.state);
   }
 
   private recomputeChoices(): void {

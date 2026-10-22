@@ -151,9 +151,10 @@ XModal #trust.warn { border-left: thick $kit-border-alt; }     /* warning rail *
 
 Textual has no font families — it's a monospace terminal. The web translation:
 
-- **Font family**: monospace-first to keep the terminal identity:
-  `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace` for UI chrome and labels;
-  an optional `system-ui` sans for long body copy (readme panes).
+- **Font family**: **Amazon Ember** (self-hosted serif display face; woff2 weights 400/700
+  under `public/assets/fonts/`), with a `ui-monospace, SFMono-Regular, Menlo, Consolas,
+  monospace` fallback stack — the serif replaced the original monospace-first terminal
+  identity; an optional `system-ui` sans for long body copy (readme panes).
 - **Sizes** (terminal cell ≈ 16px line): body `14px/1.5`; panel titles `14px`;
   large numbers/stat values `20px`; footer hints `12px`; h1 `26px` with
   `letter-spacing: -.01em` (matches the layaForWeb page's own h1 rule, same aesthetic family).
@@ -187,9 +188,11 @@ are *outlined, not filled* — thin rounded `#45475a` borders doing all the sepa
 sitting on bare background. The single loud moment is **focus**: the active panel's border turns
 soft blue `#89b4fa` and nothing else changes. Secondary text steps down through `#a6adc8 →
 #6c7086 → #45475a`; the only warm color is a peach `#fab387` used sparingly for stars/warnings.
-One motion doctrine (*"one animation"*): a single pop-in on modals (`out_cubic`, ~0.15s),
-everything else instant. Dense, legible, no shadows, no gradients, no decoration beyond a
-colored dot or glyph. It reads as a carefully-made developer tool, not a consumer app.
+Motion doctrine: a pixelated **steps()-eased animation set** — `piemove`, `capdissolve`,
+`chkpulse`, `dotpulse`, `lmflash`, `tokpop` (plus the `popin` modal) and a single
+`.eval-fill` height transition; `prefers-reduced-motion` collapses them all. Dense, legible,
+no shadows, no gradients, no decoration beyond a colored dot or glyph. It reads as a
+carefully-made developer tool, not a consumer app.
 
 ---
 
@@ -207,13 +210,14 @@ colored dot or glyph. It reads as a carefully-made developer tool, not a consume
    `#a6e3a1` for success/captures-available.
 5. **Role-based text only**: `#cdd6f4` primary, `#a6adc8` secondary, `#6c7086` hints —
    never grey-out by size, always by role token.
-6. **Monospace chrome** (`ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`) for the
-   title, coordinates, move list, and hints; 12–14px; bold only for the app name and entry
+6. **Display face** (Amazon Ember, serif) for the title, coordinates, move list, and hints;
+   12–14px; bold only for the app name and entry
    titles.
 7. **Modals**: centered, `background: #181825`, `border: round #89b4fa`, `padding: 8px 16px`,
    over a `rgba(0,0,0,.4)` dim layer, pop-in 0.15s `cubic-bezier(0.22,1,0.36,1)`.
-8. **One animation only** — the modal pop-in. Piece moves are a short tween (≤200ms);
-   everything else (hover, selection) is instant color change.
+8. **Pixelated motion** — a steps()-eased set (`piemove`, `capdissolve`, `chkpulse`,
+   `dotpulse`, `lmflash`, `tokpop`, `popin`) plus one `.eval-fill` transition; everything
+   else (hover, selection) is instant color change.
 9. **Density & alignment**: 8px spacing unit; move-list rows are single-line with a leading
    colored dot/glyph (game-state markers use the same idiom as tuistore's language dots).
 10. **Footer hint bar**: one line, 12px, `#6c7086`, showing ≤7 key hints; on narrow widths hide
@@ -231,10 +235,10 @@ colored dot or glyph. It reads as a carefully-made developer tool, not a consume
 - **No light theme** initially (ricekit has none); theme = variable swap if added later.
 - Board squares are the only filled surfaces; everything else is outline-only on `#1e1e2e`.
 - Selection/last-move/check states use the four accent colors above — no new hues.
-- 8px spacing unit, 8px corner radius, 1px borders, one 0.15s pop-in animation.
-- Monospace UI font stack; 12/14/20px size steps; bold only for title + entry names.
+- 8px spacing unit, 8px corner radius, 1px borders, steps()-eased pixelated animation set.
+- Amazon Ember display face (monospace fallback); 12/14/20px size steps; bold only for title + entry names.
 - Modal pattern: `#181825` box, blue `round` border, 40% black dim, centered.
 - Per-row status dots (move list, game state) reuse tuistore's colored-glyph idiom.
 - Footer hint bar: single line, dim color, hide-overflow on narrow widths.
-- Render the board in LayaAir `Graphics` with these exact hex values so canvas and DOM chrome
-  share one palette source.
+- Render the board as **inline SVG (React)** using these exact hex values, with the same
+  palette feeding the **DOM chrome** (single source `src/theme.ts`).

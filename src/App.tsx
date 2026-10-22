@@ -9,6 +9,7 @@ import {
   useState,
   type PointerEvent as RPointerEvent,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import { Game, ELO_LABELS, type Snap } from "./app/Game";
 import { palette, FONT } from "./theme";
@@ -120,6 +121,15 @@ export default function App() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<{ from: number; x: number; y: number; moved: boolean } | null>(null);
   const [ghost, setGhost] = useState<{ sq: number; x: number; y: number } | null>(null);
+  // Transient overlay: a copy of the moved piece slides from→to (steps easing).
+  const [tween, setTween] = useState<{ from: number; to: number; code: PieceCode } | null>(null);
+  useEffect(() => {
+    const lm = snap.lastMove;
+    if (!lm) { setTween(null); return; }
+    const pc = snap.board[lm.to];
+    if (!pc) { setTween(null); return; }
+    setTween({ from: lm.from, to: lm.to, code: pieceCode(pc) });
+  }, [snap.lastMove, snap.board]);
 
   const localPoint = useCallback((e: RPointerEvent) => {
     const svg = svgRef.current;
@@ -185,38 +195,62 @@ export default function App() {
   const cell = boardSize / 8;
   const lastFrom = snap.lastMove?.from ?? -1;
   const lastTo = snap.lastMove?.to ?? -1;
+  const moveNo = snap.moveList.reduce((n, r) => n + r.length, 0);
+  // Eval bar math: white-positive centipawns -> logistic fraction, quantized to 24 steps.
+  const cp = snap.evalCp;
+  const mateCp = Math.abs(cp) >= 90000;
+  const evalText = mateCp ? "M" : (cp > 0 ? "+" : "") + (cp / 100).toFixed(1);
+  const rawFrac = 1 / (1 + Math.pow(10, -cp / 600));
+  const clampFrac = Math.min(0.98, Math.max(0.02, rawFrac));
+  const evalFrac = 0.02 + Math.round(((clampFrac - 0.02) / 0.96) * 23) * (0.96 / 23);
 
   const squares: ReactNode[] = [];
-  const pieces: ReactNode[] = [];
   for (let row = 0; row < 8; row++) {
     for (let col = 0; col < 8; col++) {
       const sq = row * 8 + col;
       const [dc, dr] = dispCoords(sq, snap.flipped);
       const light = (row + col) % 2 === 0;
       let fill: string = light ? p.surface : p.panel;
-      if (sq === lastFrom || sq === lastTo) fill = p.lastMove;
-      else if (sq === snap.checkSq) fill = p.checkGlow;
-      else if (sq === snap.selected) fill = p.selectTint;
-      squares.push(<rect key={"s" + sq} x={10 + dc * cell} y={10 + dr * cell} width={cell} height={cell} fill={fill} />);
+      const isLast = sq === lastFrom || sq === lastTo;
+      const sel = sq === snap.selected;
+      const chk = sq === snap.checkSq;
+      const pc = snap.board[sq];
+      const isTarget = snap.targets.includes(sq) || (snap.selected >= 0 && pc && pc.c !== snap.turn);
+      const g: ReactNode[] = [
+        <rect key="s" x={10 + dc * cell} y={10 + dr * cell}
+          width={cell} height={cell} fill={fill} />,
+      ];
+      if (sel) g.push(
+        <rect key="sel" x={10 + dc * cell} y={10 + dr * cell}
+          width={cell} height={cell} fill={p.selectTint} className="sel" />,
+      );
+      if (chk) g.push(
+        <rect key="chk" x={10 + dc * cell} y={10 + dr * cell}
+          width={cell} height={cell} fill={p.checkGlow} className="chk" />,
+      );
+      if (isLast) g.push(
+        <rect key={"lm" + sq + "#" + moveNo} x={10 + dc * cell} y={10 + dr * cell}
+          width={cell} height={cell} fill={p.lastMove} className="lm" />,
+      );
+      if (pc) {
+        const dragged = ghost !== null && ghost.sq === sq;
+        g.push(
+          <g key="p" data-square={sq} transform={`translate(${10 + dc * cell},${10 + dr * cell})`}>
+            <g opacity={dragged ? 0.35 : 1} transform={`scale(${cell / 45})`}>
+              <g dangerouslySetInnerHTML={{ __html: INNER[pieceCode(pc)] }} />
+            </g>
+          </g>,
+        );
+      }
+      if (isTarget) g.push(
+        pc
+          ? <rect key="cap" className="capring" x={12 + dc * cell} y={12 + dr * cell}
+                width={cell - 4} height={cell - 4} rx={2}
+                fill="none" stroke={p.captureRing} strokeWidth={2} />
+          : <circle key="tdot" className="tdot" cx={10 + (dc + 0.5) * cell} cy={10 + (dr + 0.5) * cell} r={cell * 0.16} fill={p.destDot} />,
+      );
+      squares.push(<g key={"q" + sq}>{g}</g>);
     }
-  }
-  for (let sq = 0; sq < 64; sq++) {
-    const pc = snap.board[sq];
-    if (!pc) continue;
-    const [dc, dr] = dispCoords(sq, snap.flipped);
-    const dragged = ghost !== null && ghost.sq === sq;
-    pieces.push(
-      <g key={"p" + sq} data-square={sq} transform={`translate(${10 + dc * cell},${10 + dr * cell})`}>
-        <g opacity={dragged ? 0.35 : 1} transform={`scale(${cell / 45})`}>
-          <g dangerouslySetInnerHTML={{ __html: INNER[pieceCode(pc)] }} />
-        </g>
-      </g>,
-    );
-  }
-  const targets: ReactNode[] = [];
-  for (const t of snap.targets) {
-    const [dc, dr] = dispCoords(t, snap.flipped);
-    targets.push(<circle key={"t" + t} cx={10 + (dc + 0.5) * cell} cy={10 + (dr + 0.5) * cell} r={cell * 0.16} fill={p.destDot} />);
   }
 
   const FILES = "abcdefgh";
@@ -253,10 +287,7 @@ export default function App() {
 
       {/* header */}
       <header className="hdr">
-        <div className="brand">
-          <span className="dot" style={{ background: "var(--accent)" }} />
-          <span className="bname">chessed</span>
-        </div>
+        <span className="bname">chessed</span>
         <div className="status">
           <span className="dot" style={{ background: TONE[snap.statusTone] }} />
           <span className="stext">{snap.statusText}</span>
@@ -268,9 +299,14 @@ export default function App() {
       {/* main: board pane + detail pane */}
       <main className="main">
         <section className="pane board-pane" ref={boardPaneRef}>
-          <div className="pane-title">board</div>
+          <span className="ptitle">board</span>
           <div className="pane-body">
             <div className="board-wrap" data-board-size={boardSize}>
+              <div className="evalbar" data-evalbar>
+                <div className="eval-fill" style={{ height: `${(evalFrac * 100).toFixed(2)}%` }}>
+                  <div className="eval-chip">{evalText}</div>
+                </div>
+              </div>
               <svg
                 ref={svgRef}
                 className="board"
@@ -282,10 +318,32 @@ export default function App() {
                 onPointerMove={onMove}
                 onPointerUp={onUp}
                 onPointerLeave={onLeave}
+                onAnimationEnd={(e) => { if (e.animationName === "piemove") setTween(null); }}
               >
                 <g>{squares}</g>
-                <g>{targets}</g>
-                <g>{pieces}</g>
+                {snap.lastCapture !== null && (() => {
+                  const [cdc, ccr] = dispCoords(snap.lastCapture, snap.flipped);
+                  return (
+                    <rect className="capflash" key={"cap" + snap.lastCapture}
+                      x={10 + cdc * cell} y={10 + ccr * cell} width={cell} height={cell} />
+                  );
+                })()}
+                {tween && (() => {
+                  const [fdc, fdr] = dispCoords(tween.from, snap.flipped);
+                  const [tcc, tcr] = dispCoords(tween.to, snap.flipped);
+                  const fx = 10 + fdc * cell, fy = 10 + fdr * cell;
+                  const tx = 10 + tcc * cell, ty = 10 + tcr * cell;
+                  return (
+                    <g className="tween-piece" style={{
+                      transform: `translate(${fx}px, ${fy}px)`,
+                      pointerEvents: "none",
+                      "--dx": `${tx}px`,
+                      "--dy": `${ty}px`,
+                    } as CSSProperties}>
+                      <g transform={`scale(${cell / 45})`} dangerouslySetInnerHTML={{ __html: INNER[tween.code] }} />
+                    </g>
+                  );
+                })()}
                 <g>{fileLabels}</g>
                 <g>{rankLabels}</g>
               </svg>
@@ -296,7 +354,7 @@ export default function App() {
         <aside className="pane side">
           {/* controls */}
           <div className="card">
-            <div className="card-title">controls</div>
+            <span className="ptitle">controls</span>
             <div className="row">
               <IconBtn icon={<IW />} label="Play as White" onClick={() => game.newGame("w")} />
               <IconBtn icon={<IB />} label="Play as Black" onClick={() => game.newGame("b")} />
@@ -308,23 +366,28 @@ export default function App() {
 
           {/* elo */}
           <div className="card">
-            <div className="card-title">elo</div>
+            <span className="ptitle">strength</span>
             <div className="elo">
-              {ELO_LABELS.map((lab, i) => (
-                <button key={lab} className={"elo-btn" + (i === snap.level ? " on" : "")}
-                  onClick={() => game.setLevel(i)}>{lab}</button>
-              ))}
+              <div className="elo-value">{ELO_LABELS[snap.level]}</div>
+              <input type="range" min="0" max="4" step="1" value={snap.level} data-elo-slider
+                onInput={(e) => game.setLevel(Math.round(Number(e.currentTarget.value)))} />
+              <div className="elo-ticks">
+                {ELO_LABELS.map((lab, i) => (
+                  <span key={lab} className={"elo-tick" + (i === snap.level ? " on" : "")}>{lab}</span>
+                ))}
+              </div>
             </div>
           </div>
 
           {/* laya choices */}
           <div className="card">
-            <div className="card-title">laya choices</div>
+            <span className="ptitle">laya</span>
             <div className="choices">
               {snap.choices.length === 0
                 ? <div className="cempty">{snap.gameOver ? "— game over —" : "—"}</div>
                 : snap.choices.map((c, i) => (
                   <div className="crow" key={c.san + i}>
+                    <span className="cdot" style={{ background: c.score > 0 ? "var(--good)" : c.score < 0 ? "var(--bad)" : "var(--dim)" }} />
                     <span className="ci">{i + 1}</span>
                     <span className="csan">{c.san}</span>
                     <span className={"cscore" + (c.score >= 0 ? " pos" : " neg")}>{fmtScore(c.score)}</span>
@@ -335,7 +398,21 @@ export default function App() {
 
           {/* moves */}
           <div className="card moves-card">
-            <div className="card-title">moves</div>
+            <span className="ptitle">moves</span>
+            {snap.moveList.length > 0 && (
+              <div className="verdict" data-verdict>
+                {(() => {
+                  const row = snap.moveList[snap.moveList.length - 1];
+                  const mv = row[row.length - 1];
+                  return (
+                    <>
+                      <span className={"vmsym t-" + mv.tone}>{mv.symbol}</span>
+                      <span className={"t-" + mv.tone}>{mv.verdict}</span>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
             <div className="moves">
               {snap.moveList.length === 0
                 ? <span className="mempty">no moves</span>
@@ -345,7 +422,10 @@ export default function App() {
                     {row.map((mv, mi) => (
                       <span key={mi} className={
                         "mtok" + (mv.isMate ? " mate" : mv.isCheck ? " chk" : mv.captured ? " cap" : "")
-                      }>{mv.san}</span>
+                      }>
+                        {mv.san}
+                        <span className={"msym t-" + mv.tone}>{mv.symbol}</span>
+                      </span>
                     ))}
                   </div>
                 ))}
@@ -396,20 +476,21 @@ export default function App() {
 }
 
 // ============================================================================
-// Styles — single source: palette + FONT from theme.ts. One animation only:
-// the modal/overlay pop-in. Everything else is instant.
+// Styles - single source: palette + FONT from theme.ts. Pixelated (steps())
+// motion set: piemove/capdissolve/chkpulse/dotpulse/lmflash/tokpop + popin
+// modal + the .eval-fill height transition. prefers-reduced-motion collapses all.
 // ============================================================================
 const CSS = `
-/* self-hosted JetBrains Mono (terminal monospace); ligatures disabled in .app */
-@font-face{font-family:'JetBrains Mono';font-weight:400;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/jbmono-400.woff2) format('woff2')}
-@font-face{font-family:'JetBrains Mono';font-weight:500;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/jbmono-500.woff2) format('woff2')}
-@font-face{font-family:'JetBrains Mono';font-weight:700;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/jbmono-700.woff2) format('woff2')}
+/* self-hosted Amazon Ember (serif display face) */
+@font-face{font-family:'Amazon Ember';font-weight:400;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/amazon-ember-400.woff2) format('woff2')}
+@font-face{font-family:'Amazon Ember';font-weight:700;font-style:normal;font-display:swap;src:url(/chessed/assets/fonts/amazon-ember-700.woff2) format('woff2')}
 :root{
   --bg:${p.bg};--surface:${p.surface};--panel:${p.panel};--border:${p.border};
   --border-focus:${p.borderFocus};--cursor:${p.cursor};--text:${p.text};
   --sub:${p.sub};--dim:${p.dim};--faint:${p.faint};--accent:${p.accent};
   --lav:${p.lav};--peach:${p.peach};--good:${p.good};--warn:${p.warn};
   --bad:${p.bad};--overlay:${p.overlay};
+  --scrollbar:${p.scrollbar};--scrollbar-hover:${p.scrollbarHover};--selection:${p.selection};
   --font:${FONT};
 }
 *{box-sizing:border-box}
@@ -419,17 +500,26 @@ body{background:var(--bg);overflow:hidden}
   height:100%;display:flex;flex-direction:column;
   background:var(--bg);color:var(--text);
   font-family:var(--font);font-size:14px;line-height:1.5;
-  font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0;
   -webkit-font-smoothing:antialiased;user-select:none;
 }
 .app button{font-family:var(--font)}
 .app :focus-visible{outline:none;border-color:var(--border-focus)!important}
+/* terminal chrome: mocha scrollbars + text selection */
+.app ::-webkit-scrollbar{width:10px;height:10px}
+.app ::-webkit-scrollbar-track{background:var(--bg)}
+.app ::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:6px;border:2px solid var(--bg)}
+.app ::-webkit-scrollbar-thumb:hover{background:var(--scrollbar-hover)}
+::selection{background:var(--selection);color:var(--text)}
+
 
 /* header */
-.hdr{height:40px;flex:0 0 40px;display:flex;align-items:center;gap:12px;
-  padding:0 12px;border-bottom:1px solid var(--border)}
-.brand{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.5px}
-.bname{font-size:15px}
+.hdr{height:48px;flex:0 0 48px;display:flex;align-items:center;gap:12px;position:relative;
+  margin:8px 8px 0;padding:0 12px;border:1px solid var(--border);border-radius:8px;
+  background:transparent}
+.hdr:hover{border-color:var(--border-focus)}
+.hdr:hover .bname{color:var(--border-focus)}
+.bname{position:absolute;top:0;left:12px;transform:translateY(-50%);background:var(--bg);
+  padding:0 6px;font-size:11px;letter-spacing:.5px;font-weight:700;color:var(--sub);text-transform:lowercase;line-height:1}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}
 .status{display:flex;align-items:center;gap:8px;color:var(--sub);font-size:13px}
 .stext{white-space:nowrap}
@@ -438,24 +528,39 @@ body{background:var(--bg);overflow:hidden}
 
 /* main split */
 .main{flex:1;display:flex;min-height:0}
-.pane{border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;min-height:0}
+.pane{border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;min-height:0;
+  position:relative;background:transparent;padding-top:10px}
+.ptitle{position:absolute;top:0;left:12px;transform:translateY(-50%);background:var(--bg);
+  padding:0 6px;font-size:11px;letter-spacing:.5px;color:var(--sub);text-transform:lowercase;line-height:1}
+.pane:hover,.card:hover{border-color:var(--border-focus)}
+.pane:hover .ptitle,.card:hover .ptitle{color:var(--border-focus)}
 .board-pane{flex:1;min-width:0;margin:8px}
 .side{width:300px;flex:0 0 300px;margin:8px 8px 8px 0;padding:8px;display:flex;flex-direction:column;gap:8px}
-.pane-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--sub);
-  padding:6px 10px;border-bottom:1px solid var(--border)}
-.board-pane .pane-title{color:var(--text)}
-.side .pane-title{color:var(--lav)}
-.pane-body{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:8px}
+
 
 /* board */
-.board-wrap{display:flex;align-items:center;justify-content:center}
+.board-wrap{display:flex;align-items:stretch}
 .board{display:block;overflow:visible;cursor:crosshair}
+.evalbar{width:14px;flex:0 0 14px;margin-right:6px;border:1px solid var(--border);
+  border-radius:8px;background:var(--panel);position:relative;overflow:hidden}
+.eval-fill{position:absolute;left:0;right:0;bottom:0;background:var(--text);
+  transition:height .3s steps(6)}
+.eval-chip{position:absolute;left:0;right:0;bottom:0;text-align:center;font-size:10px;
+  background:var(--panel);color:var(--text);font-variant-numeric:tabular-nums;padding:0 1px}
+/* move-tween overlay + capture dissolve (SVG, driven by transient JS state) */
+.tween-piece{animation:piemove .18s steps(4) forwards}
+.capflash{fill:none;stroke:var(--bad);stroke-width:2;transform-box:fill-box;
+  transform-origin:center;animation:capdissolve .24s steps(4) forwards}
+.sel,.chk,.capring{pointer-events:none}
+/* last-move flash + check pulse + target-dot pulse (steps-eased) */
+.lm{transform-box:fill-box;transform-origin:center;animation:lmflash .3s steps(3) forwards;pointer-events:none}
+.chk{animation:chkpulse 1s steps(2) infinite}
+.tdot{transform-box:fill-box;transform-origin:center;animation:dotpulse 1.2s steps(2) infinite}
 
 /* cards */
-.card{border:1px solid var(--border);border-radius:8px;background:transparent}
-.card-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--lav);
-  padding:6px 10px;border-bottom:1px solid var(--border)}
+.card{border:1px solid var(--border);border-radius:8px;background:transparent;position:relative;padding-top:10px}
 .card .row,.card .elo{padding:8px 10px;display:flex;gap:8px;flex-wrap:wrap}
+
 
 /* icon buttons + custom tooltip */
 .ibtn{position:relative;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;
@@ -468,15 +573,25 @@ body{background:var(--bg);overflow:hidden}
   opacity:0;pointer-events:none;z-index:30}
 .ibtn:hover .tip{opacity:1}
 
-/* elo */
-.elo-btn{background:transparent;border:1px solid var(--border);border-radius:6px;
-  color:var(--sub);font-size:12px;padding:4px 8px;cursor:pointer}
-.elo-btn:hover{color:var(--text);border-color:var(--border-focus)}
-.elo-btn.on{border-color:var(--accent);color:var(--accent)}
+/* elo slider */
+.elo-value{color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;
+  margin-left:auto;font-size:13px}
+input[data-elo-slider]{-webkit-appearance:none;appearance:none;width:100%;height:16px;
+  background:transparent;cursor:pointer;margin-top:4px}
+input[data-elo-slider]::-webkit-slider-runnable-track{height:4px;background:var(--border)}
+input[data-elo-slider]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+  width:14px;height:14px;border-radius:0;background:var(--accent);margin-top:-5px}
+input[data-elo-slider]::-moz-range-track{height:4px;background:var(--border)}
+input[data-elo-slider]::-moz-range-thumb{width:14px;height:14px;border-radius:0;
+  border:none;background:var(--accent)}
+.elo-ticks{display:flex;justify-content:space-between;margin-top:2px}
+.elo-tick{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+.elo-tick.on{color:var(--accent);font-weight:700}
 
 /* laya choices */
 .choices{padding:4px 0;max-height:180px;overflow-y:auto}
 .crow{display:flex;align-items:center;gap:8px;padding:3px 10px;font-size:12px}
+.cdot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--dim)}
 .ci{color:var(--dim);width:16px;text-align:right}
 .csan{color:var(--text);flex:1}
 .cscore{font-variant-numeric:tabular-nums}
@@ -489,11 +604,15 @@ body{background:var(--bg);overflow:hidden}
 .moves{flex:1;padding:8px 10px;overflow:auto;display:flex;flex-direction:row;flex-wrap:wrap;gap:4px;align-content:flex-start;min-height:0}
 .mrow{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
 .mno{color:var(--dim);width:22px;text-align:right}
-.mtok{border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--text)}
-.mtok.cap{color:var(--good)}
-.mtok.chk{color:var(--warn)}
-.mtok.mate{color:var(--bad);border-color:var(--bad)}
-.mempty{color:var(--dim)}
+.mtok{border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--text);
+  display:inline-flex;align-items:center;gap:3px;animation:tokpop .15s steps(3)}
+.msym{font-weight:700}
+.t-brilliant{color:var(--lav)}
+.t-good{color:var(--good)}
+.t-warn{color:var(--warn)}
+.t-bad{color:var(--bad)}
+.verdict{padding:6px 10px;font-size:12px;display:flex;align-items:center;gap:6px}
+.vmsym{font-weight:700}
 
 /* footer */
 .ftr{flex:0 0 28px;height:28px;display:flex;align-items:center;gap:12px;
@@ -502,12 +621,12 @@ body{background:var(--bg);overflow:hidden}
 .hint kbd{font-family:var(--font);font-size:11px;border:1px solid var(--border);
   border-radius:3px;padding:0 4px;color:var(--sub);background:var(--panel)}
 
-/* modal — the ONLY animation in the app */
+/* modal pop-in (cubic-bezier; the only non-steps-eased animation) */
 .overlay{position:fixed;inset:0;background:var(--overlay);display:flex;
   align-items:center;justify-content:center;z-index:50;
   animation:popin .15s cubic-bezier(.22,1,.36,1)}
 @keyframes popin{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
-.modal{background:var(--panel);border:1px solid var(--border-focus);border-radius:8px;
+.modal{background:var(--panel);border:1px solid var(--border-focus);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.35);
   padding:8px 16px;display:flex;flex-direction:column;gap:8px;align-items:center}
 .modal-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--lav)}
 .promo-row{display:flex;gap:8px}
@@ -522,6 +641,21 @@ body{background:var(--bg);overflow:hidden}
 
 /* drag ghost */
 .ghost{position:fixed;z-index:60;pointer-events:none}
+@keyframes piemove{to{transform:translate(var(--dx),var(--dy))}}
+@keyframes capdissolve{
+  0%{opacity:.9;transform:scale(1)}
+  50%{opacity:0;transform:scale(.75)}
+  62%{opacity:.85;transform:scale(.75)}
+  100%{opacity:0;transform:scale(.35)}
+}
+@keyframes chkpulse{0%,100%{opacity:.25}50%{opacity:.95}}
+@keyframes dotpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+@keyframes lmflash{0%{opacity:0;transform:scale(1.08)}100%{opacity:1;transform:scale(1)}}
+@keyframes tokpop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:scale(1)}}
+
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+}
 
 @media (max-width:760px){.side{width:220px;flex-basis:220px}.hint.wide{display:none}}
 `;

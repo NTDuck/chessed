@@ -3,3 +3,6 @@ dist
 .DS_Store
 *.local
 .env
+.screen.png
+shot.png
+.shot.mjs
